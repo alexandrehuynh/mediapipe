@@ -12,7 +12,7 @@ def select_video():
     print("Opening file dialog...")
     root = Tk()
     root.withdraw()  # Hide the main window
-    video_path = filedialog.askopenfilename(initialdir="./videos", 
+    video_path = filedialog.askopenfilename(initialdir="./input", 
                                             title="Select video file",
                                             filetypes=(("MP4 files", "*.mp4"), ("All files", "*.*")))
     print(f"Selected path: {video_path}")
