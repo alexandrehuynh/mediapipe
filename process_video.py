@@ -9,12 +9,20 @@ mp_pose = mp.solutions.pose
 
 # Function to select video file
 def select_video():
+    print("Opening file dialog...")
     root = Tk()
     root.withdraw()  # Hide the main window
     video_path = filedialog.askopenfilename(initialdir="./videos", 
                                             title="Select video file",
                                             filetypes=(("MP4 files", "*.mp4"), ("All files", "*.*")))
+    print(f"Selected path: {video_path}")
     return video_path
+
+# Select video file
+video_path = select_video()
+if not video_path:
+    print("No video selected. Exiting...")
+    exit()
 
 # Function to get output path
 def get_output_path(input_path):
@@ -23,11 +31,6 @@ def get_output_path(input_path):
     output_path = os.path.join("output", output_name)
     return output_path
 
-# Select video file
-video_path = select_video()
-if not video_path:
-    print("No video selected. Exiting...")
-    exit()
 
 # Create output directory if it doesn't exist
 os.makedirs("output", exist_ok=True)
