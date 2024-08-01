@@ -1,0 +1,11 @@
+{
+    "min_detection_confidence": 0.5,
+    "min_tracking_confidence": 0.7,
+    "enable_gpu": false,
+    "process_every_n_frames": 1,
+    "interpolation_window": 5,
+    "angles_to_display": [
+        "LEFT_SHOULDER", "LEFT_ELBOW", "LEFT_WRIST", "LEFT_HIP", "LEFT_KNEE", "LEFT_ANKLE",
+        "RIGHT_SHOULDER", "RIGHT_ELBOW", "RIGHT_WRIST", "RIGHT_HIP", "RIGHT_KNEE", "RIGHT_ANKLE"
+    ]
+}
