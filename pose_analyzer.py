@@ -79,7 +79,7 @@ class PoseAnalyzer:
         fps = int(cap.get(cv2.CAP_PROP_FPS))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_width, frame_height))
+        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps, (frame_width, frame_height))
 
         with self.mp_pose.Pose(
             min_detection_confidence=self.config['min_detection_confidence'],
@@ -121,9 +121,9 @@ class PoseAnalyzer:
         cv2.destroyAllWindows()
 
         if frame_count == 0:
-            return False, f"Error: No frames were processed from {video_path}"
+            return False, f"Error: No frames were mapped from {video_path}"
         else:
-            return True, f"Successfully processed {frame_count} frames from {video_path}"
+            return True, f"Successfully mapped {frame_count} frames from {video_path}"
 
     def process_image(self, image_path, output_path):
         image = cv2.imread(image_path)
@@ -238,11 +238,12 @@ class PoseAnalyzer:
 
         return True, f"Analysis complete. Results saved in angle_data/{name_without_extension}_*.csv/txt/png"
 
-    def get_output_path(self, input_path, prefix="processed_"):
+    def get_output_path(self, input_path, prefix="mapped_"):
         base_name = os.path.basename(input_path)
         output_name = f"{prefix}{base_name}"
         output_path = os.path.join("output", output_name)
         os.makedirs("output", exist_ok=True)
+        output_path = output_path.rsplit('.', 1)[0] + '.mp4'
         return output_path
 
 class PoseAnalyzerGUI:
@@ -326,70 +327,77 @@ class PoseAnalyzerGUI:
             messagebox.showerror("Error", "Unable to access webcam")
             return
 
-        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = None
         recording = False
         output_filename = None
 
-        with self.pose_analyzer.mp_pose.Pose(
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5) as pose:
+        try:
+            with self.pose_analyzer.mp_pose.Pose(
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5) as pose:
 
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
 
-                frame = cv2.flip(frame, 1)
-                image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                image.flags.writeable = False
-                results = pose.process(image)
-                image.flags.writeable = True
-                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                    frame = cv2.flip(frame, 1)
+                    image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    image.flags.writeable = False
+                    results = pose.process(image)
+                    image.flags.writeable = True
+                    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-                if results.pose_landmarks:
-                    self.pose_analyzer.mp_drawing.draw_landmarks(
-                        image, results.pose_landmarks, self.pose_analyzer.mp_pose.POSE_CONNECTIONS)
+                    if results.pose_landmarks:
+                        self.pose_analyzer.mp_drawing.draw_landmarks(
+                            image, results.pose_landmarks, self.pose_analyzer.mp_pose.POSE_CONNECTIONS)
 
-                if recording:
-                    out.write(image)
+                    if recording:
+                        out.write(image)
 
-                status_text = "Recording" if recording else "Press SPACE to start recording"
-                cv2.putText(image, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    status_text = "Recording" if recording else "Press SPACE to start recording"
+                    cv2.putText(image, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-                cv2.imshow('Webcam (SPACE: start/stop, ESC: quit)', image)
+                    cv2.imshow('Webcam (SPACE: start/stop, ESC: quit)', image)
 
-                key = cv2.waitKey(1) & 0xFF
-                if key == 27:  # ESC key
-                    break
-                elif key == 32:  # SPACE key
-                    if not recording:
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        os.makedirs("input", exist_ok=True)
-                        output_filename = os.path.join("input", f"webcam_recording_{timestamp}.avi")
-                        out = cv2.VideoWriter(output_filename, fourcc, 20.0, (640, 480))
-                        recording = True
-                        print("Recording started...")
-                    else:
-                        recording = False
-                        out.release()
-                        print(f"Recording stopped. Saved as {output_filename}")
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == 27:  # ESC key
+                        break
+                    elif key == 32:  # SPACE key
+                        if not recording:
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            os.makedirs("input", exist_ok=True)
+                            output_filename = os.path.join("input", f"webcam_recording_{timestamp}.mp4")
+                            height, width = frame.shape[:2]
+                            out = cv2.VideoWriter(output_filename, fourcc, 20.0, (width, height))
+                            recording = True
+                            print("Recording started...")
+                        else:
+                            recording = False
+                            out.release()
+                            out = None
+                            cv2.destroyAllWindows()
+                            print(f"Recording stopped. Saved as {output_filename}")
+                            print(f"File exists: {os.path.exists(output_filename)}")
+                            print(f"File size: {os.path.getsize(output_filename)} bytes")
 
-        cap.release()
-        if out:
-            out.release()
-        cv2.destroyAllWindows()
+        finally:
+            cap.release()
+            if out:
+                out.release()
+            cv2.destroyAllWindows()
 
-        if output_filename and os.path.exists(output_filename):
-            self.file_path = output_filename  # Set this for the GUI instance
-            self.pose_analyzer.file_path = output_filename  # Set this for the PoseAnalyzer instance
+        if output_filename and os.path.exists(output_filename) and os.path.getsize(output_filename) > 1000:
+            self.file_path = output_filename
+            self.pose_analyzer.file_path = output_filename
             message = f"Video saved as: {output_filename}\n\nYou can now use the 'Process File' button to analyze this video."
             messagebox.showinfo("Recording Complete", message)
             self.status_label.config(text="Ready to process recorded video")
             self.process_file_button.config(state='normal')
         else:
-            messagebox.showerror("Recording Error", "Failed to save the recorded video.")
-
+            messagebox.showerror("Recording Error", "Failed to save the recorded video or file is too small.")
+                 
 def main():
     root = tk.Tk()
     app = PoseAnalyzerGUI(root)
