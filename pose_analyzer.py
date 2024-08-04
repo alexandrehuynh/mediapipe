@@ -12,14 +12,22 @@ from scipy.interpolate import CubicSpline
 
 class PoseAnalyzer:
     def __init__(self):
+        # Initialize MediaPipe drawing and pose solutions
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_pose = mp.solutions.pose
+        
+        # Load configuration settings
         self.config = self.load_config()
+        
+        # Initialize variables to store angles data and file path
         self.angles_data = []
         self.file_path = None
+        
+        # Set to keep track of detected joints
         self.detected_joints = set()
 
     def load_config(self):
+        # Load configuration from a JSON file or use default settings if the file is not found
         try:
             with open('config.json', 'r') as f:
                 return json.load(f)
@@ -36,35 +44,46 @@ class PoseAnalyzer:
             }
 
     def calculate_angle(self, a, b, c):
+        # Convert points to numpy arrays
         a = np.array(a)
         b = np.array(b)
         c = np.array(c)
         
+        # Calculate the angle in radians between three points
         radians = np.arctan2(c[1]-b[1], c[0]-b[0]) - np.arctan2(a[1]-b[1], a[0]-b[0])
+        
+        # Convert radians to degrees
         angle = np.abs(radians*180.0/np.pi)
         
+        # Adjust the angle to be within the range [0, 180]
         if angle > 180.0:
             angle = 360 - angle
             
         return angle
 
     def put_text_with_background(self, img, text, position, font, font_scale, text_color, thickness):
+        # Calculate the size of the text
         text_size, _ = cv2.getTextSize(text, font, font_scale, thickness)
         
+        # Define the background rectangle coordinates
         bg_rect_x1 = position[0]
         bg_rect_y1 = position[1] - text_size[1] - 10
         bg_rect_x2 = position[0] + text_size[0] + 10
         bg_rect_y2 = position[1]
         
+        # Draw the background rectangle
         cv2.rectangle(img, (bg_rect_x1, bg_rect_y1), (bg_rect_x2, bg_rect_y2), (0, 0, 0), -1)
         
+        # Draw the text over the background
         cv2.putText(img, text, (position[0] + 5, position[1] - 5), font, font_scale, text_color, thickness, cv2.LINE_AA)
 
     def process_file(self, file_path, output_path, joints_to_process):
+        # Set the file path and clear previous data
         self.file_path = file_path
         self.angles_data = []
         self.detected_joints.clear()
 
+        # Process the file based on its type (image or video)
         if file_path.lower().endswith(('.png', '.jpg', '.jpeg')):
             return self.process_image(file_path, output_path, joints_to_process)
         elif file_path.lower().endswith(('.mp4', '.avi', '.mov')):
@@ -98,6 +117,7 @@ class PoseAnalyzer:
                 if frame_count % self.config['process_every_n_frames'] != 0:
                     continue
 
+                # Process the frame
                 image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 image.flags.writeable = False
                 results = pose.process(image)
@@ -151,6 +171,7 @@ class PoseAnalyzer:
                 return False, "No pose landmarks detected in the image"
     
     def draw_pose_annotations(self, image, pose_landmarks, frame_width, frame_height, joints_to_process):
+        # Draw the pose landmarks on the image
         self.mp_drawing.draw_landmarks(
             image,
             pose_landmarks,
