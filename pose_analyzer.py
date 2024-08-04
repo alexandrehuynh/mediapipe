@@ -185,28 +185,28 @@ class PoseAnalyzer:
         right_hip = landmarks[self.mp_pose.PoseLandmark.RIGHT_HIP.value]
 
         # Calculate midpoints
-        mid_shoulder = ((left_shoulder.x + right_shoulder.x) / 2, (left_shoulder.y + right_shoulder.y) / 2)
-        mid_hip = ((left_hip.x + right_hip.x) / 2, (left_hip.y + right_hip.y) / 2)
-
-        # Estimate additional points
-        neck = (mid_shoulder[0], mid_shoulder[1] - 0.05)  # Slightly above mid_shoulder
-        upper_spine = (mid_shoulder[0], mid_shoulder[1] + 0.1)  # Between shoulder and hip
-        lower_spine = (mid_hip[0], mid_hip[1] - 0.1)  # Between hip and shoulder
+        mid_shoulder = np.array([(left_shoulder.x + right_shoulder.x) / 2, (left_shoulder.y + right_shoulder.y) / 2])
+        mid_hip = np.array([(left_hip.x + right_hip.x) / 2, (left_hip.y + right_hip.y) / 2])
 
         # Create spine points
         spine_points = np.array([
             [nose.x, nose.y],
-            [neck[0], neck[1]],
-            [mid_shoulder[0], mid_shoulder[1]],
-            [upper_spine[0], upper_spine[1]],
-            [lower_spine[0], lower_spine[1]],
-            [mid_hip[0], mid_hip[1]]
+            mid_shoulder,
+            (mid_shoulder + mid_hip) / 2,  # Add a point between shoulder and hip
+            mid_hip
         ])
+
+        # Remove any NaN values
+        spine_points = spine_points[~np.isnan(spine_points).any(axis=1)]
+
+        if len(spine_points) < 3:
+            print("Not enough valid points to create a spine curve")
+            return
 
         # Create a smooth curve using CubicSpline
         t = np.linspace(0, 1, len(spine_points))
         cs = CubicSpline(t, spine_points, bc_type='natural')
-        t_smooth = np.linspace(0, 1, 100)
+        t_smooth = np.linspace(0, 1, 50)  # Reduce number of points
         smooth_spine = cs(t_smooth)
 
         # Convert to pixel coordinates
@@ -216,28 +216,19 @@ class PoseAnalyzer:
         # Draw the main curve
         cv2.polylines(image, [smooth_spine_px], False, (0, 255, 0), 2)
 
-        # Draw vertebrae-like circles along the curve
-        for point in smooth_spine_px[::5]:  # Draw every 5th point
-            cv2.circle(image, tuple(point), 3, (0, 255, 0), -1)
-
-        # Draw larger circles for major joints
-        major_points = [
-            smooth_spine_px[0],   # Base of skull
-            smooth_spine_px[20],  # Cervical vertebrae
-            smooth_spine_px[40],  # Thoracic vertebrae
-            smooth_spine_px[60],  # Lumbar vertebrae
-            smooth_spine_px[-1]   # Sacrum
-        ]
-        for point in major_points:
-            cv2.circle(image, tuple(point), 5, (0, 200, 0), -1)
+        # Draw circles for major joints
+        for point in spine_points:
+            cv2.circle(image, tuple(np.int32(point * [w, h])), 5, (0, 200, 0), -1)
 
         # Add labels
+        labels = ["C1", "T1", "L1", "S1"]
         font = cv2.FONT_HERSHEY_SIMPLEX
-        cv2.putText(image, "C1", tuple(major_points[1]), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.putText(image, "T1", tuple(major_points[2]), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.putText(image, "L1", tuple(major_points[3]), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-        cv2.putText(image, "S1", tuple(major_points[4]), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-
+        label_positions = [0, 0.3, 0.7, 1]  # Adjusted positions along the spine
+        for label, pos in zip(labels, label_positions):
+            index = min(int(pos * (len(smooth_spine_px) - 1)), len(smooth_spine_px) - 1)
+            point = smooth_spine_px[index]
+            cv2.putText(image, label, tuple(point), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+            
     def calculate_angles(self, landmarks, joints_to_process):
         angles = {}
         joints = {
