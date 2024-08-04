@@ -8,6 +8,7 @@ import json
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
+from scipy.interpolate import CubicSpline
 
 class PoseAnalyzer:
     def __init__(self):
@@ -16,6 +17,7 @@ class PoseAnalyzer:
         self.config = self.load_config()
         self.angles_data = []
         self.file_path = None
+        self.detected_joints = set()
 
     def load_config(self):
         try:
@@ -58,18 +60,19 @@ class PoseAnalyzer:
         
         cv2.putText(img, text, (position[0] + 5, position[1] - 5), font, font_scale, text_color, thickness, cv2.LINE_AA)
 
-    def process_file(self, file_path, output_path):
+    def process_file(self, file_path, output_path, joints_to_process):
         self.file_path = file_path
         self.angles_data = []
+        self.detected_joints.clear()
 
         if file_path.lower().endswith(('.png', '.jpg', '.jpeg')):
-            return self.process_image(file_path, output_path)
+            return self.process_image(file_path, output_path, joints_to_process)
         elif file_path.lower().endswith(('.mp4', '.avi', '.mov')):
-            return self.process_video(file_path, output_path)
+            return self.process_video(file_path, output_path, joints_to_process)
         else:
             return False, "Unsupported file format"
 
-    def process_video(self, video_path, output_path):
+    def process_video(self, video_path, output_path, joints_to_process):
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             return False, f"Error: Unable to open video file {video_path}"
@@ -79,7 +82,7 @@ class PoseAnalyzer:
         fps = int(cap.get(cv2.CAP_PROP_FPS))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps, (frame_width, frame_height))
+        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_width, frame_height))
 
         with self.mp_pose.Pose(
             min_detection_confidence=self.config['min_detection_confidence'],
@@ -102,9 +105,10 @@ class PoseAnalyzer:
                 image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
                 if results.pose_landmarks:
-                    self.draw_pose_annotations(image, results.pose_landmarks, frame_width, frame_height)
-                    angles = self.calculate_angles(results.pose_landmarks.landmark)
+                    self.draw_pose_annotations(image, results.pose_landmarks, frame_width, frame_height, joints_to_process)
+                    angles = self.calculate_angles(results.pose_landmarks.landmark, joints_to_process)
                     self.angles_data.append(angles)
+                    self.detected_joints.update(angles.keys())
 
                 out.write(image)
                 cv2.imshow('MediaPipe Pose', image)
@@ -112,9 +116,7 @@ class PoseAnalyzer:
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
 
-                # Update progress
-                progress = int((frame_count / total_frames) * 100)
-                yield progress
+                yield int((frame_count / total_frames) * 100)
 
         cap.release()
         out.release()
@@ -125,7 +127,7 @@ class PoseAnalyzer:
         else:
             return True, f"Successfully mapped {frame_count} frames from {video_path}"
 
-    def process_image(self, image_path, output_path):
+    def process_image(self, image_path, output_path, joints_to_process):
         image = cv2.imread(image_path)
         if image is None:
             return False, f"Error: Unable to read image file {image_path}"
@@ -139,15 +141,16 @@ class PoseAnalyzer:
             results = pose.process(image_rgb)
             
             if results.pose_landmarks:
-                self.draw_pose_annotations(image, results.pose_landmarks, image.shape[1], image.shape[0])
-                angles = self.calculate_angles(results.pose_landmarks.landmark)
+                self.draw_pose_annotations(image, results.pose_landmarks, image.shape[1], image.shape[0], joints_to_process)
+                angles = self.calculate_angles(results.pose_landmarks.landmark, joints_to_process)
                 self.angles_data.append(angles)
+                self.detected_joints.update(angles.keys())
                 cv2.imwrite(output_path, image)
                 return True, f"Successfully processed image and saved to {output_path}"
             else:
                 return False, "No pose landmarks detected in the image"
     
-    def draw_pose_annotations(self, image, pose_landmarks, frame_width, frame_height):
+    def draw_pose_annotations(self, image, pose_landmarks, frame_width, frame_height, joints_to_process):
         self.mp_drawing.draw_landmarks(
             image,
             pose_landmarks,
@@ -157,21 +160,85 @@ class PoseAnalyzer:
         )
 
         landmarks = pose_landmarks.landmark
-        angles = self.calculate_angles(landmarks)
+        angles = self.calculate_angles(landmarks, joints_to_process)
 
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.5
         thickness = 2
         text_color = (255, 255, 255)
 
-        for angle_name in self.config['angles_to_display']:
+        for angle_name in joints_to_process:
             if angle_name in angles:
                 angle = angles[angle_name]
                 position = landmarks[getattr(self.mp_pose.PoseLandmark, angle_name)]
                 coord = (int(position.x * frame_width), int(position.y * frame_height))
                 self.put_text_with_background(image, f"{angle_name}: {angle:.0f}", coord, font, font_scale, text_color, thickness)
 
-    def calculate_angles(self, landmarks):
+        self.draw_spine_curve(image, pose_landmarks.landmark)
+
+    def draw_spine_curve(self, image, landmarks):
+        # Get relevant keypoints
+        nose = landmarks[self.mp_pose.PoseLandmark.NOSE.value]
+        left_shoulder = landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER.value]
+        right_shoulder = landmarks[self.mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
+        left_hip = landmarks[self.mp_pose.PoseLandmark.LEFT_HIP.value]
+        right_hip = landmarks[self.mp_pose.PoseLandmark.RIGHT_HIP.value]
+
+        # Calculate midpoints
+        mid_shoulder = ((left_shoulder.x + right_shoulder.x) / 2, (left_shoulder.y + right_shoulder.y) / 2)
+        mid_hip = ((left_hip.x + right_hip.x) / 2, (left_hip.y + right_hip.y) / 2)
+
+        # Estimate additional points
+        neck = (mid_shoulder[0], mid_shoulder[1] - 0.05)  # Slightly above mid_shoulder
+        upper_spine = (mid_shoulder[0], mid_shoulder[1] + 0.1)  # Between shoulder and hip
+        lower_spine = (mid_hip[0], mid_hip[1] - 0.1)  # Between hip and shoulder
+
+        # Create spine points
+        spine_points = np.array([
+            [nose.x, nose.y],
+            [neck[0], neck[1]],
+            [mid_shoulder[0], mid_shoulder[1]],
+            [upper_spine[0], upper_spine[1]],
+            [lower_spine[0], lower_spine[1]],
+            [mid_hip[0], mid_hip[1]]
+        ])
+
+        # Create a smooth curve using CubicSpline
+        t = np.linspace(0, 1, len(spine_points))
+        cs = CubicSpline(t, spine_points, bc_type='natural')
+        t_smooth = np.linspace(0, 1, 100)
+        smooth_spine = cs(t_smooth)
+
+        # Convert to pixel coordinates
+        h, w = image.shape[:2]
+        smooth_spine_px = np.int32(smooth_spine * [w, h])
+
+        # Draw the main curve
+        cv2.polylines(image, [smooth_spine_px], False, (0, 255, 0), 2)
+
+        # Draw vertebrae-like circles along the curve
+        for point in smooth_spine_px[::5]:  # Draw every 5th point
+            cv2.circle(image, tuple(point), 3, (0, 255, 0), -1)
+
+        # Draw larger circles for major joints
+        major_points = [
+            smooth_spine_px[0],   # Base of skull
+            smooth_spine_px[20],  # Cervical vertebrae
+            smooth_spine_px[40],  # Thoracic vertebrae
+            smooth_spine_px[60],  # Lumbar vertebrae
+            smooth_spine_px[-1]   # Sacrum
+        ]
+        for point in major_points:
+            cv2.circle(image, tuple(point), 5, (0, 200, 0), -1)
+
+        # Add labels
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(image, "C1", tuple(major_points[1]), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(image, "T1", tuple(major_points[2]), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(image, "L1", tuple(major_points[3]), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(image, "S1", tuple(major_points[4]), font, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+
+    def calculate_angles(self, landmarks, joints_to_process):
         angles = {}
         joints = {
             'LEFT_SHOULDER': (self.mp_pose.PoseLandmark.LEFT_EAR, self.mp_pose.PoseLandmark.LEFT_SHOULDER, self.mp_pose.PoseLandmark.LEFT_ELBOW),
@@ -188,13 +255,16 @@ class PoseAnalyzer:
             'RIGHT_ANKLE': (self.mp_pose.PoseLandmark.RIGHT_KNEE, self.mp_pose.PoseLandmark.RIGHT_ANKLE, self.mp_pose.PoseLandmark.RIGHT_HEEL)
         }
 
-        for joint, (p1, p2, p3) in joints.items():
-            angle = self.calculate_angle(
-                (landmarks[p1.value].x, landmarks[p1.value].y),
-                (landmarks[p2.value].x, landmarks[p2.value].y),
-                (landmarks[p3.value].x, landmarks[p3.value].y)
-            )
-            angles[joint] = angle
+        for joint in joints_to_process:
+            if joint in joints:
+                p1, p2, p3 = joints[joint]
+                if all(landmarks[p.value].visibility > 0.5 for p in (p1, p2, p3)):
+                    angle = self.calculate_angle(
+                        (landmarks[p1.value].x, landmarks[p1.value].y),
+                        (landmarks[p2.value].x, landmarks[p2.value].y),
+                        (landmarks[p3.value].x, landmarks[p3.value].y)
+                    )
+                    angles[joint] = angle
 
         return angles
 
@@ -204,8 +274,12 @@ class PoseAnalyzer:
 
         df = pd.DataFrame(self.angles_data)
         
+        # Filter out joints that were not detected
+        detected_columns = [col for col in df.columns if col in self.detected_joints]
+        df = df[detected_columns]
+
         if selected_angles:
-            df = df[selected_angles]
+            df = df[[col for col in selected_angles if col in detected_columns]]
 
         stats = df.agg(['mean', 'min', 'max', 'std'])
         print("Angle Statistics:")
@@ -227,7 +301,7 @@ class PoseAnalyzer:
             for column in df.columns:
                 plt.plot(df[column].rolling(window=5).mean(), label=column)
             plt.legend()
-            plt.title("Joint Angle Variations Over Time (5-frame moving average)")
+            plt.title("Detected Joint Angle Variations Over Time (5-frame moving average)")
             plt.xlabel("Frame")
             plt.ylabel("Angle (degrees)")
             plt.savefig(f"angle_data/{name_without_extension}_angle_plot.png")
@@ -251,7 +325,8 @@ class PoseAnalyzerGUI:
         self.master = master
         self.master.title("Pose Analyzer")
         self.pose_analyzer = PoseAnalyzer()
-
+        self.process_joints = {}
+        self.analyze_joints = {}
         self.create_widgets()
 
     def create_widgets(self):
@@ -273,11 +348,21 @@ class PoseAnalyzerGUI:
         self.progress_bar = ttk.Progressbar(self.master, orient="horizontal", length=200, mode="determinate")
         self.progress_bar.pack()
 
-        self.angle_vars = {}
+        # Create two separate sections for processing and analysis joints
+        processing_frame = ttk.LabelFrame(self.master, text="Joints to Process")
+        processing_frame.pack(padx=10, pady=5, fill="x")
+
+        analysis_frame = ttk.LabelFrame(self.master, text="Joints to Analyze")
+        analysis_frame.pack(padx=10, pady=5, fill="x")
+
         for angle in self.pose_analyzer.config['angles_to_display']:
-            var = tk.BooleanVar(value=True)
-            ttk.Checkbutton(self.master, text=angle, variable=var).pack()
-            self.angle_vars[angle] = var
+            self.process_joints[angle] = tk.BooleanVar(value=True)
+            ttk.Checkbutton(processing_frame, text=angle, variable=self.process_joints[angle]).pack(anchor="w")
+
+            self.analyze_joints[angle] = tk.BooleanVar(value=True)
+            ttk.Checkbutton(analysis_frame, text=angle, variable=self.analyze_joints[angle]).pack(anchor="w")
+
+        ttk.Label(self.master, text="Note: Analysis will only include joints that were detected during processing.").pack(pady=5)
 
     def select_file(self):
         self.file_path = filedialog.askopenfilename(
@@ -293,18 +378,21 @@ class PoseAnalyzerGUI:
             self.pose_analyzer.file_path = self.file_path
             output_path = self.pose_analyzer.get_output_path(self.file_path)
             
+            # Pass the selected joints to process
+            joints_to_process = [angle for angle, var in self.process_joints.items() if var.get()]
+            
             if self.file_path.lower().endswith(('.mp4', '.avi', '.mov')):
                 self.progress_bar["value"] = 0
                 self.master.update()
                 
-                for progress in self.pose_analyzer.process_video(self.file_path, output_path):
+                for progress in self.pose_analyzer.process_video(self.file_path, output_path, joints_to_process):
                     self.progress_bar["value"] = progress
                     self.master.update()
                 
                 success = True
                 message = "Video processing complete"
             else:
-                success, message = self.pose_analyzer.process_file(self.file_path, output_path)
+                success, message = self.pose_analyzer.process_file(self.file_path, output_path, joints_to_process)
             
             if success:
                 messagebox.showinfo("Processing Complete", message)
@@ -314,7 +402,7 @@ class PoseAnalyzerGUI:
             messagebox.showerror("Error", "Please select a file first")
 
     def analyze_data(self):
-        selected_angles = [angle for angle, var in self.angle_vars.items() if var.get()]
+        selected_angles = [angle for angle, var in self.analyze_joints.items() if var.get()]
         success, message = self.pose_analyzer.analyze_data(selected_angles)
         if success:
             messagebox.showinfo("Analysis Complete", message)
@@ -369,15 +457,13 @@ class PoseAnalyzerGUI:
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                             os.makedirs("input", exist_ok=True)
                             output_filename = os.path.join("input", f"webcam_recording_{timestamp}.mp4")
-                            height, width = frame.shape[:2]
-                            out = cv2.VideoWriter(output_filename, fourcc, 20.0, (width, height))
+                            out = cv2.VideoWriter(output_filename, fourcc, 20.0, (frame.shape[1], frame.shape[0]))
                             recording = True
                             print("Recording started...")
                         else:
                             recording = False
                             out.release()
                             out = None
-                            cv2.destroyAllWindows()
                             print(f"Recording stopped. Saved as {output_filename}")
                             print(f"File exists: {os.path.exists(output_filename)}")
                             print(f"File size: {os.path.getsize(output_filename)} bytes")
@@ -397,7 +483,7 @@ class PoseAnalyzerGUI:
             self.process_file_button.config(state='normal')
         else:
             messagebox.showerror("Recording Error", "Failed to save the recorded video or file is too small.")
-                 
+
 def main():
     root = tk.Tk()
     app = PoseAnalyzerGUI(root)
