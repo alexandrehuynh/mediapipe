@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pose Analyzer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/0.21.1/axios.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; }
+        h1 { color: #333; }
+        form { margin-bottom: 20px; }
+        input[type="file"] { margin-bottom: 10px; }
+        button { padding: 10px; margin-right: 10px; cursor: pointer; }
+        #jointSelection { margin-top: 20px; }
+        #result { margin-top: 20px; padding: 10px; background-color: #f4f4f4; }
+    </style>
+</head>
+<body>
+    <h1>Pose Analyzer</h1>
+    <form id="uploadForm">
+        <input type="file" name="file" accept=".png,.jpg,.jpeg,.mp4,.avi,.mov">
+        <br><br>
+        <div id="jointSelection">
+            <h3>Joints to Process:</h3>
+            <button type="button" id="selectAll">Select All</button>
+            <button type="button" id="deselectAll">Deselect All</button>
+            <br><br>
+            <!-- Checkboxes will be added here dynamically -->
+        </div>
+        <br>
+        <button type="submit">Upload and Process</button>
+    </form>
+    <div id="result"></div>
+    <button id="analyzeButton" style="display: none;">Analyze Data</button>
+
+    <script>
+        const joints = ['LEFT_SHOULDER', 'LEFT_ELBOW', 'LEFT_WRIST', 'LEFT_HIP', 'LEFT_KNEE', 'LEFT_ANKLE',
+                        'RIGHT_SHOULDER', 'RIGHT_ELBOW', 'RIGHT_WRIST', 'RIGHT_HIP', 'RIGHT_KNEE', 'RIGHT_ANKLE'];
+
+        const jointSelection = document.getElementById('jointSelection');
+        
+        joints.forEach(joint => {
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.name = 'joints';
+            checkbox.value = joint;
+            checkbox.id = joint;
+            checkbox.checked = true;
+
+            const label = document.createElement('label');
+            label.htmlFor = joint;
+            label.appendChild(document.createTextNode(joint));
+
+            jointSelection.appendChild(checkbox);
+            jointSelection.appendChild(label);
+            jointSelection.appendChild(document.createElement('br'));
+        });
+
+        document.getElementById('selectAll').addEventListener('click', () => {
+            document.querySelectorAll('input[name="joints"]').forEach(cb => cb.checked = true);
+        });
+
+        document.getElementById('deselectAll').addEventListener('click', () => {
+            document.querySelectorAll('input[name="joints"]').forEach(cb => cb.checked = false);
+        });
+
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            try {
+                const response = await axios.post('/upload', formData);
+                document.getElementById('result').innerText = response.data.message;
+                document.getElementById('analyzeButton').style.display = 'block';
+            } catch (error) {
+                document.getElementById('result').innerText = `Error: ${error.response.data.error}`;
+            }
+        });
+
+        document.getElementById('analyzeButton').addEventListener('click', async () => {
+            const selectedAngles = Array.from(document.querySelectorAll('input[name="joints"]:checked')).map(cb => cb.value);
+            try {
+                const response = await axios.post('/analyze', { selected_angles: selectedAngles });
+                document.getElementById('result').innerText = response.data.message;
+            } catch (error) {
+                document.getElementById('result').innerText = `Error: ${error.response.data.error}`;
+            }
+        });
+    </script>
+</body>
+</html>

@@ -28,3 +28,4 @@ scipy==1.14.0
 six==1.16.0
 sounddevice==0.4.7
 tzdata==2024.1
+Flask==3.0.3
