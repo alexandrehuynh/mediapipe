@@ -4,6 +4,8 @@ import numpy as np
 import os
 import json
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from scipy.interpolate import CubicSpline
 
@@ -15,6 +17,7 @@ class PoseAnalyzer:
         self.angles_data = []
         self.file_path = None
         self.detected_joints = set()
+        self.mode = '2d'
 
     def load_config(self):
         try:
@@ -166,7 +169,7 @@ class PoseAnalyzer:
                 self.put_text_with_background(image, text, coord, font, font_scale, text_color, thickness)
 
         self.draw_spine_curve(image, landmarks)
-        
+
     def put_text_with_background(self, img, text, position, font, font_scale, text_color, thickness):
         text_size, _ = cv2.getTextSize(text, font, font_scale, thickness)
         bg_rect_x1 = position[0]
@@ -231,9 +234,11 @@ class PoseAnalyzer:
             
     def calculate_angles(self, results, joints_to_process):
         angles = {}
-        landmarks = results.pose_world_landmarks if self.mode == '3d' and results.pose_world_landmarks else results.pose_landmarks
-        if not landmarks:
+        if not results.pose_landmarks:
             return angles
+
+        landmarks = results.pose_landmarks.landmark
+
 
         joints = {
             'LEFT_SHOULDER': (self.mp_pose.PoseLandmark.LEFT_EAR, self.mp_pose.PoseLandmark.LEFT_SHOULDER, self.mp_pose.PoseLandmark.LEFT_ELBOW),
@@ -323,5 +328,7 @@ class PoseAnalyzer:
             print(f"Error creating plot: {e}")
             return False, f"Analysis complete, but there was an error creating the plot: {e}"
 
-        return True, f"Analysis complete. Results saved in angle_data/{mode_prefix}{name_without_extension}_*.csv/txt/png"
+        return True, f"Analysis complete. Plot saved as angle_data/{mode_prefix}{name_without_extension}_angle_plot.png"
+
+
 
